@@ -2,6 +2,10 @@ import pygame
 import spriteSheet
 import color
 import random
+"""
+UI VENV for modern python virtual env
+"""
+
 
 # Initialisation de Pygame
 pygame.init()
@@ -29,7 +33,12 @@ def draw_rect(text, isBold, textColor, rectColor, rect, isRectTrans=False):
     if isRectTrans:
         shape_surf = pygame.Surface(pygame.Rect(rect).size, pygame.SRCALPHA)
         pygame.draw.rect(shape_surf, color, shape_surf.get_rect())
-        screen.blit(shape_surf, rect)
+        # Équilibrer la position du texte
+        if len(text) <= 3: textRect = (rect[0] + (rect[2]/2), rect[1] + (rect[3]/3))
+        elif len(text) <= 6: textRect = (rect[0] + (rect[2]/3), rect[1] + (rect[3]/3))
+        else: textRect = (rect[0] + (rect[2]/4), rect[1] + (rect[3]/3))
+        texte = font.render(text, isBold, textColor)
+        screen.blit(texte, textRect)
     else:
         # Équilibrer la position du texte
         if len(text) <= 3: textRect = (rect[0] + (rect[2]/2), rect[1] + (rect[3]/3))
@@ -245,16 +254,15 @@ def replay():
 
 
 # Game loop
-def game():
+def game(rate=10, speed=6, fall=-10):
     global last_update, meteorites
     meteorites = []  # Liste pour stocker les météorites
-    game_timer = pygame.time.get_ticks()
     
     # Parameters
     raining = True
-    spawn_rate = 10
-    player.speed = 6
-    fall_speed = -8
+    spawn_rate = rate
+    player.speed = speed
+    fall_speed = fall
 
     while True:
         screen.blit(bg_img, (0, 0))
@@ -289,6 +297,7 @@ def game():
                     raining = True
 
         # Afficher un timer
+        game_timer = pygame.time.get_ticks()
         draw_rect(str(game_timer//1000), False, color.black, color.white, (w-40, 0, 40, 30))
 
         FramePerSec.tick(FPS)
@@ -304,7 +313,13 @@ def menu():
     if play_button.collidepoint(mouse):
         return 1
 
-    #return pygame.Rect((w/4, h/3, w/6, 100))
+def difficulty():
+    #msg = draw_rect('Choisir une difficulté', True, color.white, color.red, (w/4, h/6, w/6, 100), True)
+    hard_button = draw_rect('Hard', True, color.white, color.red, (w/4, h/6+100, w/6, 100))
+    medium_button = draw_rect('Hard', True, color.white, color.red, (w/4, h/6+200, w/6, 100))
+    easy_button = draw_rect('Hard', True, color.white, color.red, (w/4, h/6+300, w/6, 100))
+    return (hard_button, medium_button, easy_button)
+
 
 
 def main():
@@ -316,7 +331,7 @@ def main():
         screen.blit(bg_img, (0, 0))
         screen.blit(sun_img, (100, 100))
 
-        if menu_can_run: menu()
+        if menu_can_run: difficulty()
         if replay_can_run: replay()
 
         # Event handler
