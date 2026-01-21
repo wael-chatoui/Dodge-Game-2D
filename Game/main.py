@@ -1,364 +1,393 @@
+"""
+Dodge Game 2D - Main entry point
+Complete refactor with all systems integrated
+"""
 import pygame
-import spriteSheet
-import color
-import random
-"""
-UI VENV for modern python virtual env
-"""
+import sys
+from .core.game_engine import GameEngine
+from .core.state_manager import StateManager, GameState
+from .core.asset_loader import AssetLoader
+from .config import constants as C
+from .utils import colors
+
+# Import all screens and systems
+from .ui.menu import MainMenu, DifficultySelect
+from .ui.tutorial_screen import TutorialScreen
+from .ui.game_over_screen import GameOverScreen
+from .ui.hud import HUD
+from .entities.player import Player
+from .entities.meteorite import Meteorite
+from .entities.world import World
+from .entities.powerup import PowerUpManager
+from .systems.audio_manager import AudioManager
+from .systems.score_manager import ScoreManager
+from .systems.difficulty_manager import DifficultyManager
+from .systems.particle_system import ParticleSystem
+from .systems.physics import Ragdoll
 
 
-# Initialisation de Pygame
-pygame.init()
-pygame.display.set_caption("Dodge Game 2D")
-FramePerSec = pygame.time.Clock()
-w = 800
-h = 600
-FPS = 60
-last_update = pygame.time.get_ticks()
-screen = pygame.display.set_mode((w, h))
-vec = pygame.math.Vector2
-tile_size = 50
-ground = h-160
-font = pygame.font.SysFont(None, 24)
+class DodgeGame:
+    """Main game class."""
 
-bg_img = pygame.image.load('Game/assets/img/sky.png')
-sun_img = pygame.image.load('Game/assets/img/sun.png')
+    def __init__(self):
+        # Core systems
+        self.engine = GameEngine()
+        self.state_manager = StateManager()
+        self.asset_loader = AssetLoader()
+        self.audio = AudioManager()
 
-def draw_grid():
-    for line in range(0, 20):
-        pygame.draw.line(screen, (255, 255, 255), (0, line * tile_size), (w, line * tile_size))
-        pygame.draw.line(screen, (255, 255, 255), (line * tile_size, 0), (line * tile_size, h))
+        # Load assets
+        self.asset_loader.preload_all_assets()
 
-def draw_rect(text, isBold, textColor, rectColor, rect, isRectTrans=False):
-    if isRectTrans:
-        shape_surf = pygame.Surface(pygame.Rect(rect).size, pygame.SRCALPHA)
-        pygame.draw.rect(shape_surf, color, shape_surf.get_rect())
-        # Équilibrer la position du texte
-        if len(text) <= 3: textRect = (rect[0] + (rect[2]/2), rect[1] + (rect[3]/3))
-        elif len(text) <= 6: textRect = (rect[0] + (rect[2]/3), rect[1] + (rect[3]/3))
-        else: textRect = (rect[0] + (rect[2]/4), rect[1] + (rect[3]/3))
-        texte = font.render(text, isBold, textColor)
-        screen.blit(texte, textRect)
-    else:
-        # Équilibrer la position du texte
-        if len(text) <= 3: textRect = (rect[0] + (rect[2]/2), rect[1] + (rect[3]/3))
-        elif len(text) <= 6: textRect = (rect[0] + (rect[2]/3), rect[1] + (rect[3]/3))
-        else: textRect = (rect[0] + (rect[2]/4), rect[1] + (rect[3]/3))
+        # Background
+        self.bg_img = self.asset_loader.load_image(C.SKY_IMAGE)
+        self.sun_img = self.asset_loader.load_image(C.SUN_IMAGE)
 
-        texte = font.render(text, isBold, textColor)
-        pygame.draw.rect(screen, rectColor, (rect))
-        screen.blit(texte, textRect)
-        return pygame.Rect(rect)
+        # UI screens
+        self.main_menu = MainMenu()
+        self.difficulty_select = DifficultySelect()
+        self.tutorial = TutorialScreen()
+        self.game_over_screen = GameOverScreen()
+        self.hud = HUD()
 
-class World():
-    def __init__(self, data):
-        self.tile_list = []
+        # Game objects (initialized when game starts)
+        self.world = World()
+        self.player = None
+        self.meteorites = []
+        self.ragdoll = None
 
-        #load images
-        dirt_img = pygame.image.load('Game/assets/img/dirt.png')
-        grass_img = pygame.image.load('Game/assets/img/grass.png')
+        # Systems
+        self.score_manager = ScoreManager()
+        self.difficulty_manager = None
+        self.powerup_manager = PowerUpManager()
+        self.particle_system = ParticleSystem()
 
-        row_count = 0
-        for row in data:
-            col_count = 0
-            for tile in row:
-                if tile == 1:
-                    img = pygame.transform.scale(dirt_img, (tile_size, tile_size))
-                    img_rect = img.get_rect()
-                    img_rect.x = col_count * tile_size
-                    img_rect.y = row_count * tile_size
-                    tile = (img, img_rect)
-                    self.tile_list.append(tile)
-                if tile == 2:
-                    img = pygame.transform.scale(grass_img, (tile_size, tile_size))
-                    img_rect = img.get_rect()
-                    img_rect.x = col_count * tile_size
-                    img_rect.y = row_count * tile_size
-                    tile = (img, img_rect)
-                    self.tile_list.append(tile)
-                col_count += 1
-            row_count += 1
+        # Game state
+        self.countdown_timer = C.COUNTDOWN_DURATION
+        self.countdown_start = 0
+        self.game_start_time = 0
+        self.active_powerups = []
+        self.last_jump_state = False  # Track jump for particles
 
-    def draw(self):
-        for tile in self.tile_list:
-            screen.blit(tile[0], tile[1])
+        # Start music
+        self.audio.play_music()
 
-class Player():
-    def __init__(self, x, y):
-        self.images_stand = []
-        self.images_stand_left = []
-        self.images_right = []
-        self.images_left = []
-        self.size = 70
-        self.index = 0
-        self.counter = 0
+    def run(self):
+        """Main game loop."""
+        while self.engine.running:
+            self.engine.update()
+            dt = self.engine.get_delta_time()
 
-        doux_sheet_image = pygame.image.load('Game/assets/Sprites/doux.png').convert_alpha()
-        doux_sheet = spriteSheet.diviser_sprite_sheet(doux_sheet_image, 24, 23)
+            # Handle events
+            self._handle_events()
 
-        for i in range(4):
-            img = doux_sheet[i]
-            img = pygame.transform.scale(img, (self.size, self.size))
-            img_left = pygame.transform.flip(img, True, False)
-            self.images_stand.append(img)
-            self.images_stand_left.append(img_left)
-        for u in range(10):
-            img = doux_sheet[u+4]
-            img = pygame.transform.scale(img, (self.size, self.size))
-            img_left = pygame.transform.flip(img, True, False)
-            self.images_right.append(img)
-            self.images_left.append(img_left)
+            # Update current state
+            self._update_state(dt)
 
-        self.image = self.images_stand[self.index]
-        self.rect = pygame.Rect(self.image.get_rect()[0], 0, self.size, self.size)
-        self.rect.x = x
-        self.rect.y = y
+            # Draw current state
+            self._draw_state()
 
-        self.hitbox = self.rect
+            pygame.display.flip()
 
-        self.vel_y = 0
-        self.jumped = False
-        self.direction = 1
+        pygame.quit()
+        sys.exit()
 
-    def update(self):
-        dx = 0
-        dy = 0
-        self.speed = 6
-        walk_cooldown = 8
-        
-        self.counter += 1
-        if self.counter > walk_cooldown:
-            self.counter = 0	
-            self.index += 1
-        if self.index >= len(self.images_stand) or self.index >= len(self.images_right) or self.index >= len(self.images_left):
-            self.index = 0
-
-        #get keypresses
-        key = pygame.key.get_pressed()
-        if key[pygame.K_UP] and not self.jumped and self.rect.bottom == ground + self.size:  # Autorise le saut seulement si le joueur est au sol et n'a pas déjà sauté
-            self.vel_y = -15
-            self.jumped = True  # Met à jour la variable jumped
-
-        if not key[pygame.K_UP] and self.rect.bottom == ground + self.size:  # Réinitialise la variable jumped lorsque le joueur touche le sol
-            self.jumped = False
-
-        if key[pygame.K_LEFT] and not self.rect.x <= -2: # aller à gauche sans sortir de l'écran
-            dx -= self.speed
-            self.index += 1
-            self.direction = -2
-
-        if key[pygame.K_RIGHT] and not self.rect.x >= w-self.size+10:  # aller à droite sans sortir de l'écran
-            dx += self.speed
-            self.index += 1
-            self.direction = 2
-
-        if not key[pygame.K_RIGHT] and not key[pygame.K_LEFT]:
-            if self.direction == -2:
-                self.direction = -1
-            elif self.direction == 2:
-                self.direction = 1
-
-        #handle direction
-        if self.direction == 1: self.image = self.images_stand[self.index]
-        elif self.direction == -1: self.image = self.images_stand_left[self.index]
-        elif self.direction == -2: self.image = self.images_left[self.index]
-        elif self.direction == 2: self.image = self.images_right[self.index]
-
-        #add gravity
-        self.vel_y += 1
-        if self.vel_y > 50:
-            self.vel_y = 50
-        dy += self.vel_y
-
-        #check for collision
-
-        #update player coordinates
-        self.rect.x += dx
-        self.rect.y += dy
-
-        if self.rect.bottom > ground+70:
-            self.rect.bottom = ground+70
-            dy = 0
-
-        #draw player onto screen
-        screen.blit(self.image, self.rect)
-
-class Meteorite():
-    def __init__(self, data, index=0):
-        self.index = index
-        self.image = pygame.image.load(f'Game/assets/rocks/rock{random.randint(1, 2)}.png')
-        self.image = pygame.transform.scale(self.image, (tile_size, tile_size))
-
-        self.spawn_tile = random.randint(1, len(data[0]))
-
-        self.hitbox_width = 30  # Largeur de la hitbox
-        self.hitbox_height = 30  # Hauteur de la hitbox
-        self.rect = pygame.Rect(self.spawn_tile, 0, self.hitbox_width, self.hitbox_height)
-        
-        self.grounded = False
-        
-        self.velocity = -8
-
-    def update(self):
-        self.rect.x = self.spawn_tile * tile_size
-        self.rect.y -= self.velocity
-
-        # Check if it hits the ground
-        if self.rect.y > ground:
-            self.rect.y = ground
-            self.grounded = True
-
-        # Display
-        if not self.grounded:
-            screen.blit(self.image, self.rect)    
-
-    def check_collision(self, player_rect):
-        return self.rect.colliderect(player_rect)   
-    
-# Ajoute cette fonction pour générer une nouvelle météorite à des intervalles aléatoires
-def generate_meteorite(vel):
-    global meteorites
-    meteorite = Meteorite(world1_data)
-    meteorite.velocity = vel
-    meteorites.append(meteorite)
-
-#Data de la map
-world1_data = [
-    [0 ,0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  
-    [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2], 
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
-
-player = Player(100, ground)
-world = World(world1_data)
-rock = Meteorite(world1_data)
-
-def count_down():
-    count = 4
-    # draw_rect(str(count), True, color.black, )
-
-def replay():
-    replay_button = draw_rect('Rejouer', True, color.white, color.red, (w/4, h/3, w/6, 100))
-    mouse = pygame.mouse.get_pos()
-    if replay_button.collidepoint(mouse):
-        return 1
-
-
-
-# Game loop
-def game(rate=10, speed=6, fall=-10):
-    global last_update, meteorites
-    meteorites = []  # Liste pour stocker les météorites
-    
-    # Parameters
-    raining = True
-    spawn_rate = rate
-    player.speed = speed
-    fall_speed = fall
-
-    while True:
-        screen.blit(bg_img, (0, 0))
-        screen.blit(sun_img, (100, 100))
-
-        world.draw()
-        #draw_grid()
-        player.update()
-
-        # Générer de nouvelles météorites à des intervalles aléatoires
-        if random.randint(1, spawn_rate) == 1:
-            generate_meteorite(fall_speed)
-
-        if raining:
-            # Faire tomber chaque météorite et supprimer celles qui ont touché le sol
-            for meteorite in meteorites:
-                meteorite.update()
-                if meteorite.check_collision(player.hitbox):
-                    # Collision détectée
-                    return
-                if meteorite.grounded:
-                    meteorites.remove(meteorite)
-
-        # Event handler
+    def _handle_events(self):
+        """Handle pygame events."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
+                self.engine.running = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_p:
+                if event.key == pygame.K_p and self.state_manager.is_state(GameState.PLAYING):
+                    self.state_manager.transition_to(GameState.PAUSED)
+                    self.audio.play_sfx('menu_click')
+                elif event.key == pygame.K_p and self.state_manager.is_state(GameState.PAUSED):
+                    self.state_manager.return_to_previous()
+                    self.audio.play_sfx('menu_click')
+
+    def _update_state(self, dt: float):
+        """Update based on current state."""
+        if self.state_manager.is_state(GameState.MENU):
+            new_state = self.main_menu.update(pygame.mouse.get_pos())
+            if new_state != GameState.MENU:
+                if new_state is None:
+                    self.engine.running = False
+                else:
+                    self.state_manager.transition_to(new_state)
+                    self.audio.play_sfx('menu_click')
+
+        elif self.state_manager.is_state(GameState.DIFFICULTY_SELECT):
+            new_state, difficulty = self.difficulty_select.update(pygame.mouse.get_pos())
+            if new_state != GameState.DIFFICULTY_SELECT:
+                self.state_manager.transition_to(new_state)
+                self.audio.play_sfx('menu_click')
+                if difficulty:
+                    self._start_game(difficulty)
+
+        elif self.state_manager.is_state(GameState.TUTORIAL):
+            new_state = self.tutorial.update(pygame.mouse.get_pos())
+            if new_state != GameState.TUTORIAL:
+                self.state_manager.transition_to(new_state)
+                self.audio.play_sfx('menu_click')
+
+        elif self.state_manager.is_state(GameState.COUNTDOWN):
+            self._update_countdown()
+
+        elif self.state_manager.is_state(GameState.PLAYING):
+            self._update_game(dt)
+
+        elif self.state_manager.is_state(GameState.GAME_OVER):
+            new_state = self.game_over_screen.update(pygame.mouse.get_pos())
+            if new_state != GameState.GAME_OVER:
+                self.state_manager.transition_to(new_state)
+                self.audio.play_sfx('menu_click')
+
+    def _draw_state(self):
+        """Draw based on current state."""
+        # Background
+        self.engine.screen.blit(self.bg_img, (0, 0))
+        self.engine.screen.blit(self.sun_img, (100, 100))
+
+        if self.state_manager.is_state(GameState.MENU):
+            self.main_menu.draw(self.engine.screen)
+
+        elif self.state_manager.is_state(GameState.DIFFICULTY_SELECT):
+            self.difficulty_select.draw(self.engine.screen)
+
+        elif self.state_manager.is_state(GameState.TUTORIAL):
+            self.tutorial.draw(self.engine.screen)
+
+        elif self.state_manager.is_state(GameState.COUNTDOWN):
+            self._draw_countdown()
+
+        elif self.state_manager.is_state(GameState.PLAYING):
+            self._draw_game()
+
+        elif self.state_manager.is_state(GameState.PAUSED):
+            self._draw_game()
+            self._draw_pause_overlay()
+
+        elif self.state_manager.is_state(GameState.GAME_OVER):
+            self._draw_game_over()
+
+    def _start_game(self, difficulty: str):
+        """Initialize new game."""
+        # Reset systems
+        self.score_manager.reset()
+        self.difficulty_manager = DifficultyManager(difficulty)
+        self.meteorites = []
+        self.active_powerups = []
+        self.particle_system.clear()
+        self.powerup_manager.clear()
+        self.ragdoll = None
+
+        # Create player
+        self.player = Player(100, C.GROUND_LEVEL)
+
+        # Start countdown
+        self.countdown_timer = C.COUNTDOWN_DURATION
+        self.countdown_start = pygame.time.get_ticks()
+        self.state_manager.transition_to(GameState.COUNTDOWN)
+
+    def _update_countdown(self):
+        """FIXED: Actual countdown implementation (was empty in original)."""
+        elapsed = (pygame.time.get_ticks() - self.countdown_start) / 1000
+        self.countdown_timer = C.COUNTDOWN_DURATION - int(elapsed)
+
+        if self.countdown_timer <= 0:
+            self.game_start_time = pygame.time.get_ticks()
+            self.state_manager.transition_to(GameState.PLAYING)
+
+    def _update_game(self, dt: float):
+        """Update game logic."""
+        game_time = (pygame.time.get_ticks() - self.game_start_time) // 1000
+
+        # Update systems
+        self.difficulty_manager.update(dt)
+        self.score_manager.update(dt)
+        self.score_manager.check_multiplier_expiry()
+
+        # Update player
+        was_grounded = self.player.grounded
+        self.player.update(dt)
+
+        # Emit jump particles
+        if was_grounded and not self.player.grounded:
+            self.particle_system.emit_jump(self.player.rect.x, self.player.rect.y)
+            self.audio.play_sfx('jump')
+
+        # Spawn meteorites
+        if self.difficulty_manager.should_spawn_meteorite():
+            meteorite = Meteorite(self.world.data)
+            meteorite.velocity = self.difficulty_manager.get_meteorite_speed()
+            self.meteorites.append(meteorite)
+
+        # Update meteorites (FIXED: No list modification during iteration)
+        meteorites_to_remove = []
+        for meteorite in self.meteorites:
+            meteorite.update(dt)
+
+            # Emit trail particles
+            if not meteorite.grounded:
+                self.particle_system.emit_meteorite_trail(meteorite.rect.x, meteorite.rect.y)
+
+            # Check collision
+            if meteorite.check_collision(self.player.hitbox):
+                if self.player.has_shield:
+                    # Shield absorbs hit
+                    self.player.has_shield = False
+                    self.active_powerups = [p for p in self.active_powerups if 'Shield' not in p]
+                    meteorites_to_remove.append(meteorite)
+                    self.particle_system.emit_collision(meteorite.rect.x, meteorite.rect.y)
+                    self.audio.play_sfx('collision')
+                else:
+                    # Game over
+                    self._trigger_game_over()
                     return
-                if event.key == pygame.K_r:
-                    raining = True
 
-        # Afficher un timer
-        game_timer = pygame.time.get_ticks()
-        draw_rect(str(game_timer//1000), False, color.black, color.white, (w-40, 0, 40, 30))
+            if meteorite.grounded:
+                meteorites_to_remove.append(meteorite)
+                self.score_manager.add_meteorite_dodge()
 
-        FramePerSec.tick(FPS)
-        pygame.display.update()
+        for meteorite in meteorites_to_remove:
+            self.meteorites.remove(meteorite)
 
-def menu():
-    # Afficher le menu
-    screen.blit(bg_img, (0, 0))
-    screen.blit(sun_img, (100, 100))
+        # Update power-ups
+        self.powerup_manager.update(dt, self.world.data)
+        collected = self.powerup_manager.check_collisions(self.player.hitbox)
+        for powerup_type in collected:
+            self._apply_powerup(powerup_type)
 
-    play_button = draw_rect('Jouer', True, color.white, color.red, (w/4, h/3, w/6, 100))
-    mouse = pygame.mouse.get_pos()
-    if play_button.collidepoint(mouse):
-        return 1
+        # Update particles
+        self.particle_system.update(dt)
 
-def difficulty():
-    #msg = draw_rect('Choisir une difficulté', True, color.white, color.red, (w/4, h/6, w/6, 100), True)
-    hard_button = draw_rect('Hard', True, color.white, color.red, (w/4, h/6+100, w/6, 100))
-    medium_button = draw_rect('Hard', True, color.white, color.red, (w/4, h/6+200, w/6, 100))
-    easy_button = draw_rect('Hard', True, color.white, color.red, (w/4, h/6+300, w/6, 100))
-    return (hard_button, medium_button, easy_button)
+    def _apply_powerup(self, powerup_type):
+        """Apply collected power-up."""
+        self.audio.play_sfx('powerup')
+        self.particle_system.emit_powerup_collect(
+            self.player.rect.centerx,
+            self.player.rect.centery
+        )
+
+        if powerup_type.value == 'shield':
+            self.player.has_shield = True
+            self.active_powerups.append("Shield Active")
+        elif powerup_type.value == 'slowmo':
+            # Slow down meteorites temporarily
+            for meteorite in self.meteorites:
+                meteorite.velocity *= C.SLOWMO_FACTOR
+            self.active_powerups.append("Slow Motion")
+        elif powerup_type.value == 'multiplier':
+            self.score_manager.set_multiplier(C.SCORE_MULTIPLIER, C.MULTIPLIER_DURATION)
+            self.active_powerups.append("Score x2")
+
+    def _trigger_game_over(self):
+        """Handle game over."""
+        self.audio.play_sfx('game_over')
+        self.ragdoll = Ragdoll(self.player.rect.x, self.player.rect.y)
+        self.particle_system.emit_collision(self.player.rect.centerx, self.player.rect.centery)
+
+        # Animate ragdoll
+        start_time = pygame.time.get_ticks()
+        while not self.ragdoll.finished and pygame.time.get_ticks() - start_time < 3000:
+            dt = self.engine.clock.tick(C.FPS) / 1000.0
+            self.ragdoll.update(dt)
+
+            # Draw game with ragdoll
+            self.engine.screen.blit(self.bg_img, (0, 0))
+            self.engine.screen.blit(self.sun_img, (100, 100))
+            self.world.draw(self.engine.screen)
+
+            for meteorite in self.meteorites:
+                meteorite.draw(self.engine.screen)
+
+            self.ragdoll.draw(self.engine.screen)
+            pygame.display.flip()
+
+        # Save score
+        if self.score_manager.is_high_score():
+            self.score_manager.save_high_score()
+
+        self.state_manager.transition_to(GameState.GAME_OVER)
+
+    def _draw_game(self):
+        """Draw game objects."""
+        # World
+        self.world.draw(self.engine.screen)
+
+        # Meteorites
+        for meteorite in self.meteorites:
+            meteorite.draw(self.engine.screen)
+
+        # Power-ups
+        self.powerup_manager.draw(self.engine.screen)
+
+        # Particles
+        self.particle_system.draw(self.engine.screen)
+
+        # Player or ragdoll
+        if self.ragdoll and not self.state_manager.is_state(GameState.PLAYING):
+            self.ragdoll.draw(self.engine.screen)
+        else:
+            self.player.draw(self.engine.screen)
+
+        # HUD
+        game_time = (pygame.time.get_ticks() - self.game_start_time) // 1000
+        self.hud.draw(
+            self.engine.screen,
+            self.score_manager.current_score,
+            game_time,
+            self.score_manager.score_multiplier,
+            self.active_powerups
+        )
+
+    def _draw_countdown(self):
+        """Draw countdown."""
+        self.world.draw(self.engine.screen)
+        if self.player:
+            self.player.draw(self.engine.screen)
+
+        font = pygame.font.SysFont(None, 72)
+        if self.countdown_timer > 0:
+            text = font.render(str(self.countdown_timer), True, colors.white)
+        else:
+            text = font.render("GO!", True, colors.green)
+
+        text_rect = text.get_rect(center=(C.SCREEN_WIDTH // 2, C.SCREEN_HEIGHT // 2))
+        self.engine.screen.blit(text, text_rect)
+
+    def _draw_pause_overlay(self):
+        """Draw pause overlay."""
+        overlay = pygame.Surface((C.SCREEN_WIDTH, C.SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 128))
+        self.engine.screen.blit(overlay, (0, 0))
+
+        font = pygame.font.SysFont(None, 48)
+        text = font.render("PAUSED", True, colors.white)
+        text_rect = text.get_rect(center=(C.SCREEN_WIDTH // 2, C.SCREEN_HEIGHT // 2))
+        self.engine.screen.blit(text, text_rect)
+
+        info_font = pygame.font.SysFont(None, 24)
+        info = info_font.render("Press P to resume", True, colors.white)
+        info_rect = info.get_rect(center=(C.SCREEN_WIDTH // 2, C.SCREEN_HEIGHT // 2 + 50))
+        self.engine.screen.blit(info, info_rect)
+
+    def _draw_game_over(self):
+        """Draw game over screen."""
+        self.engine.screen.blit(self.bg_img, (0, 0))
+        self.engine.screen.blit(self.sun_img, (100, 100))
+
+        game_time = (pygame.time.get_ticks() - self.game_start_time) // 1000
+        self.game_over_screen.draw(
+            self.engine.screen,
+            self.score_manager.current_score,
+            game_time,
+            self.score_manager.is_high_score(),
+            self.score_manager.get_rank(),
+            self.score_manager.high_scores
+        )
 
 
-
-def main():
-    run = True
-    menu_can_run = True
-    replay_can_run = False
-    while run:
-        #Background
-        screen.blit(bg_img, (0, 0))
-        screen.blit(sun_img, (100, 100))
-
-        if menu_can_run: difficulty()
-        if replay_can_run: replay()
-
-        # Event handler
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                run = False
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if menu() == 1:
-                    menu_can_run = False
-                    game()
-                    replay_can_run = True
-                elif replay() == 1:
-                    replay_can_run = False
-                    game()
-
-
-        # Afficher le message de fin
-        # Fonction rejouer
-        
-        
-
-        FramePerSec.tick(FPS)
-        pygame.display.update()
-    
 if __name__ == '__main__':
-    main()
-
-# Quitter le jeu
-print(f'[Finished in {last_update/1000}s]')
-pygame.quit()
+    game = DodgeGame()
+    game.run()
