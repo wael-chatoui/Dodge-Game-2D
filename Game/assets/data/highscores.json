@@ -5,6 +5,30 @@
       "score": 5450,
       "time": 82,
       "meteorites_dodged": 109
+    },
+    {
+      "name": "Player",
+      "score": 2550,
+      "time": 48,
+      "meteorites_dodged": 51
+    },
+    {
+      "name": "Player",
+      "score": 1700,
+      "time": 21,
+      "meteorites_dodged": 34
+    },
+    {
+      "name": "Player",
+      "score": 1550,
+      "time": 22,
+      "meteorites_dodged": 31
+    },
+    {
+      "name": "Player",
+      "score": 200,
+      "time": 8,
+      "meteorites_dodged": 4
     }
   ]
 }
